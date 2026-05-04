@@ -729,47 +729,47 @@ const App = () => {
         <p className="text-[9px] opacity-40">Follow the celestial threads</p>
       </div>
 
-      <div className="absolute top-14 right-10 z-20 flex flex-col items-end gap-3">
+      <div className="absolute top-14 right-8 z-20 flex flex-col items-end gap-2">
         {isLocalPreview && (
-          <div className="pointer-events-auto flex items-center gap-3">
+          <div className="pointer-events-auto flex items-center gap-2">
             <button
               onPointerDown={(e) => {
                 e.stopPropagation();
                 setIsPanelOpen(open => !open);
               }}
-              className="rounded-full border border-cyan-200/25 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.35em] text-cyan-100 backdrop-blur-3xl transition hover:bg-cyan-300/16"
+              className="rounded-full border border-cyan-200/25 bg-cyan-300/10 px-4 py-2 text-[9px] uppercase tracking-[0.3em] text-cyan-100 backdrop-blur-3xl transition hover:bg-cyan-300/16"
             >
               {isPanelOpen ? 'Hide Tuner' : 'Tune Flock'}
             </button>
           </div>
         )}
-        <div className="bg-white/5 backdrop-blur-3xl border border-white/10 rounded-full px-8 py-3 text-white flex items-center gap-4">
-          <span className="text-[10px] opacity-25 tracking-widest">SIGILS</span>
-          <span className="text-2xl font-bold">{progress} / {total}</span>
+        <div className="bg-white/5 backdrop-blur-3xl border border-white/10 rounded-full px-6 py-2 text-white flex items-center gap-3">
+          <span className="text-[9px] opacity-25 tracking-widest">SIGILS</span>
+          <span className="text-xl font-bold">{progress} / {total}</span>
         </div>
 
         {isLocalPreview && isPanelOpen && (
-          <div className="pointer-events-auto w-[min(26rem,calc(100vw-2.5rem))] rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 text-white shadow-[0_18px_80px_rgba(0,0,0,0.45)] backdrop-blur-3xl">
-            <div className="flex items-start justify-between gap-4">
+          <div className="pointer-events-auto max-h-[calc(100vh-7.5rem)] w-[min(23rem,calc(100vw-1.75rem))] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-slate-950/65 p-4 text-white shadow-[0_18px_80px_rgba(0,0,0,0.45)] backdrop-blur-3xl">
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.35em] text-cyan-200/70">Localhost only</p>
-                <h2 className="mt-2 text-sm font-semibold uppercase tracking-[0.25em] text-white/90">Flock Tuner</h2>
+                <p className="text-[9px] uppercase tracking-[0.28em] text-cyan-200/70">Localhost only</p>
+                <h2 className="mt-1 text-[12px] font-semibold uppercase tracking-[0.2em] text-white/90">Flock Tuner</h2>
               </div>
               <button
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   resetTuning();
                 }}
-                className="rounded-full border border-white/10 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-white/75 transition hover:bg-white/8"
+                className="rounded-full border border-white/10 px-3 py-1.5 text-[9px] uppercase tracking-[0.22em] text-white/75 transition hover:bg-white/8"
               >
                 Reset
               </button>
             </div>
 
-            <div className="mt-5 grid gap-4">
+            <div className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2">
               {FLOCK_CONTROL_FIELDS.map(field => (
                 <label key={field.key} className="block">
-                  <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/55">
+                  <div className="mb-1 flex items-center justify-between text-[9px] uppercase tracking-[0.14em] text-white/55">
                     <span>{field.label}</span>
                     <span className="text-white/95">{formatPanelValue(flockSettings[field.key], field.precision)}</span>
                   </div>
@@ -780,18 +780,18 @@ const App = () => {
                     step={field.step}
                     value={flockSettings[field.key]}
                     onChange={(e) => updateFlockSetting(field.key, Number(e.target.value))}
-                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-cyan-300"
+                    className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-cyan-300"
                   />
                 </label>
               ))}
             </div>
 
-            <div className="mt-5 border-t border-white/10 pt-5">
-              <p className="mb-4 text-[10px] uppercase tracking-[0.3em] text-amber-100/70">Light</p>
-              <div className="grid gap-4">
+            <div className="mt-4 border-t border-white/10 pt-4">
+              <p className="mb-3 text-[9px] uppercase tracking-[0.22em] text-amber-100/70">Light</p>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-2">
                 {LIGHT_CONTROL_FIELDS.map(field => (
                   <label key={field.key} className="block">
-                    <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/55">
+                    <div className="mb-1 flex items-center justify-between text-[9px] uppercase tracking-[0.14em] text-white/55">
                       <span>{field.label}</span>
                       <span className="text-white/95">{formatPanelValue(lightSettings[field.key], field.precision)}</span>
                     </div>
@@ -802,14 +802,13 @@ const App = () => {
                       step={field.step}
                       value={lightSettings[field.key]}
                       onChange={(e) => updateLightSetting(field.key, Number(e.target.value))}
-                      className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-amber-300"
+                      className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-amber-300"
                     />
                   </label>
                 ))}
               </div>
             </div>
 
-            <pre className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] leading-6 text-cyan-100/85">{JSON.stringify({ flockSettings, lightSettings }, null, 2)}</pre>
           </div>
         )}
       </div>
