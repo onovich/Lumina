@@ -35,6 +35,8 @@ const App = () => {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
     // --- 1. 场景基础 ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COLORS.skyTwilight);
@@ -249,38 +251,35 @@ const App = () => {
     for(let i=0; i<CONFIG.fireflyCount; i++) fireflies.push(new Firefly());
 
     // --- 6. 输入系统 ---
-    const input = { moveX: 0, moveY: 0 };
+    const touchInput = { moveX: 0, moveY: 0 };
     const touch = { left: -1, right: -1, lx: 0, ly: 0, rx: 0, ry: 0 };
+    const keyboard = {
+      KeyW: false,
+      KeyA: false,
+      KeyS: false,
+      KeyD: false,
+      ArrowUp: false,
+      ArrowDown: false,
+      ArrowLeft: false,
+      ArrowRight: false,
+      KeyQ: false,
+      KeyE: false
+    };
+    const mouse = { locked: false, dragging: false, lastX: 0, lastY: 0 };
+    const MOUSE_LOOK_SENSITIVITY = 0.0024;
+    const DRAG_LOOK_SENSITIVITY = 0.005;
+    const KEYBOARD_TURN_SPEED = 0.032;
 
-    const onStart = (e) => {
-      for (let t of e.changedTouches) {
-        if (t.clientX < window.innerWidth / 2) {
-          touch.left = t.identifier; touch.lx = t.clientX; touch.ly = t.clientY;
-        } else {
-          touch.right = t.identifier; touch.rx = t.clientX; touch.ry = t.clientY;
-          handleAction();
-        }
-      }
+    const applyLookDelta = (deltaX, deltaY, sensitivity) => {
+      player.yaw -= deltaX * sensitivity;
+      player.pitch = clamp(player.pitch - deltaY * sensitivity, -1.4, 1.4);
     };
-    const onMove = (e) => {
-      for (let t of e.changedTouches) {
-        if (t.identifier === touch.left) {
-          input.moveX = (t.clientX - touch.lx) / 50; 
-          input.moveY = -(t.clientY - touch.ly) / 50;
-        } else if (t.identifier === touch.right) {
-          player.yaw -= (t.clientX - touch.rx) * 0.005;
-          player.pitch -= (t.clientY - touch.ry) * 0.005;
-          player.pitch = Math.max(-1.4, Math.min(1.4, player.pitch));
-          touch.rx = t.clientX; touch.ry = t.clientY;
-        }
-      }
-    };
-    const onEnd = (e) => {
-      for (let t of e.changedTouches) {
-        if (t.identifier === touch.left) { touch.left = -1; input.moveX = 0; input.moveY = 0; }
-        else touch.right = -1;
-      }
-    };
+
+    const getKeyboardAxes = () => ({
+      moveX: ((keyboard.KeyD || keyboard.ArrowRight) ? 1 : 0) - ((keyboard.KeyA || keyboard.ArrowLeft) ? 1 : 0),
+      moveY: ((keyboard.KeyW || keyboard.ArrowUp) ? 1 : 0) - ((keyboard.KeyS || keyboard.ArrowDown) ? 1 : 0),
+      turn: (keyboard.KeyQ ? 1 : 0) - (keyboard.KeyE ? 1 : 0)
+    });
 
     const handleAction = () => {
       const ray = new THREE.Raycaster();
@@ -299,23 +298,121 @@ const App = () => {
           ob.shrine.material.emissiveIntensity = 2.0;
           ob.tipGlow.material.opacity = 0.6;
           ob.shrineGlow.material.opacity = 0.6;
-          setProgress(p => (p+1 === CONFIG.obeliskCount ? (setIsWon(true), p+1) : p+1));
+          setProgress(p => (p + 1 === CONFIG.obeliskCount ? (setIsWon(true), p + 1) : p + 1));
         }
       }
+    };
+
+    const onStart = (e) => {
+      e.preventDefault();
+      for (let t of e.changedTouches) {
+        if (t.clientX < window.innerWidth / 2) {
+          touch.left = t.identifier; touch.lx = t.clientX; touch.ly = t.clientY;
+        } else {
+          touch.right = t.identifier; touch.rx = t.clientX; touch.ry = t.clientY;
+          handleAction();
+        }
+      }
+    };
+    const onMove = (e) => {
+      e.preventDefault();
+      for (let t of e.changedTouches) {
+        if (t.identifier === touch.left) {
+          touchInput.moveX = clamp((t.clientX - touch.lx) / 50, -1, 1);
+          touchInput.moveY = clamp(-(t.clientY - touch.ly) / 50, -1, 1);
+        } else if (t.identifier === touch.right) {
+          applyLookDelta(t.clientX - touch.rx, t.clientY - touch.ry, DRAG_LOOK_SENSITIVITY);
+          touch.rx = t.clientX; touch.ry = t.clientY;
+        }
+      }
+    };
+    const onEnd = (e) => {
+      for (let t of e.changedTouches) {
+        if (t.identifier === touch.left) {
+          touch.left = -1;
+          touchInput.moveX = 0;
+          touchInput.moveY = 0;
+        } else if (t.identifier === touch.right) {
+          touch.right = -1;
+        }
+      }
+    };
+
+    const onKeyDown = (e) => {
+      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+        e.preventDefault();
+      }
+      if (Object.hasOwn(keyboard, e.code)) keyboard[e.code] = true;
+      if (e.code === 'Space' && !e.repeat) handleAction();
+    };
+
+    const onKeyUp = (e) => {
+      if (Object.hasOwn(keyboard, e.code)) keyboard[e.code] = false;
+    };
+
+    const onPointerLockChange = () => {
+      mouse.locked = document.pointerLockElement === renderer.domElement;
+      if (!mouse.locked) mouse.dragging = false;
+    };
+
+    const onMouseDown = (e) => {
+      if (e.button !== 0) return;
+      mouse.dragging = true;
+      mouse.lastX = e.clientX;
+      mouse.lastY = e.clientY;
+      renderer.domElement.requestPointerLock?.();
+    };
+
+    const onMouseMove = (e) => {
+      if (mouse.locked) {
+        applyLookDelta(e.movementX, e.movementY, MOUSE_LOOK_SENSITIVITY);
+        return;
+      }
+      if (!mouse.dragging) return;
+      applyLookDelta(e.clientX - mouse.lastX, e.clientY - mouse.lastY, DRAG_LOOK_SENSITIVITY);
+      mouse.lastX = e.clientX;
+      mouse.lastY = e.clientY;
+    };
+
+    const onMouseUp = () => {
+      mouse.dragging = false;
+    };
+
+    const onCanvasClick = (e) => {
+      if (e.button !== 0) return;
+      handleAction();
+    };
+
+    const onContextMenu = (e) => {
+      e.preventDefault();
     };
 
     window.addEventListener('touchstart', onStart, { passive: false });
     window.addEventListener('touchmove', onMove, { passive: false });
     window.addEventListener('touchend', onEnd);
+    window.addEventListener('touchcancel', onEnd);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointerlockchange', onPointerLockChange);
+    renderer.domElement.addEventListener('mousedown', onMouseDown);
+    renderer.domElement.addEventListener('click', onCanvasClick);
+    renderer.domElement.addEventListener('contextmenu', onContextMenu);
 
     // --- 7. 渲染循环 ---
     const animate = () => {
       requestAnimationFrame(animate);
 
+      const keyboardAxes = getKeyboardAxes();
+      if (keyboardAxes.turn !== 0) player.yaw += keyboardAxes.turn * KEYBOARD_TURN_SPEED;
+
       // 位移
       const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
       const right = new THREE.Vector3(-Math.cos(player.yaw), 0, Math.sin(player.yaw));
-      const dir = new THREE.Vector3().addScaledVector(forward, input.moveY).addScaledVector(right, -input.moveX);
+      const moveX = clamp(touchInput.moveX + keyboardAxes.moveX, -1, 1);
+      const moveY = clamp(touchInput.moveY + keyboardAxes.moveY, -1, 1);
+      const dir = new THREE.Vector3().addScaledVector(forward, moveY).addScaledVector(right, -moveX);
       if (dir.length() > 0) player.pos.addScaledVector(dir.normalize(), CONFIG.moveSpeed);
 
       const gH = getH(player.pos.x, player.pos.z) + CONFIG.playerHeight;
@@ -401,6 +498,17 @@ const App = () => {
     return () => {
       window.removeEventListener('touchstart', onStart);
       window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      window.removeEventListener('touchcancel', onEnd);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.removeEventListener('pointerlockchange', onPointerLockChange);
+      renderer.domElement.removeEventListener('mousedown', onMouseDown);
+      renderer.domElement.removeEventListener('click', onCanvasClick);
+      renderer.domElement.removeEventListener('contextmenu', onContextMenu);
+      if (document.pointerLockElement === renderer.domElement) document.exitPointerLock?.();
       containerRef.current?.removeChild(renderer.domElement);
     };
   }, []);
@@ -433,8 +541,24 @@ const App = () => {
       {/* 交互提示 */}
       <div className={`absolute bottom-24 left-1/2 -translate-x-1/2 transition-all duration-700 ${isAiming ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6 pointer-events-none'}`}>
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 px-10 py-3 rounded-full text-white text-[10px] tracking-[0.4em] uppercase flex items-center gap-3">
-          <span>Ignite the Sigil</span>
+          <span>Space / Click / Tap to Ignite</span>
           <div className="w-2 h-2 bg-white rounded-full animate-ping" />
+        </div>
+      </div>
+
+      <div className="absolute bottom-8 left-8 right-8 flex justify-between gap-4 text-white/75 text-[10px] tracking-[0.25em] uppercase pointer-events-none">
+        <div className="max-w-sm rounded-3xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-2xl">
+          <p className="text-white/35">Desktop</p>
+          <p className="mt-2 leading-relaxed">WASD / Arrows Move</p>
+          <p className="leading-relaxed">Q / E Rotate</p>
+          <p className="leading-relaxed">Mouse Look</p>
+          <p className="leading-relaxed">Space / Click Interact</p>
+        </div>
+        <div className="max-w-sm rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-right backdrop-blur-2xl">
+          <p className="text-white/35">Touch</p>
+          <p className="mt-2 leading-relaxed">Left Half Drag Move</p>
+          <p className="leading-relaxed">Right Half Drag Look</p>
+          <p className="leading-relaxed">Right Half Tap Interact</p>
         </div>
       </div>
 
