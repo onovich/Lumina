@@ -1,6 +1,53 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 
+const INITIAL_FLOCK_SETTINGS = {
+  shrineAirLift: 12,
+  startShrineAirLift: 10,
+  orbitRadius: 10.5,
+  orbitVerticalSpan: 2.6,
+  orbitSpeed: 0.001,
+  orbitHoldDistance: 48,
+  perceptionRadius: 22,
+  minSpeed: 0.18,
+  maxSpeed: 0.38,
+  cohesionWeight: 0.024,
+  alignmentWeight: 0.032,
+  separationWeight: 0.088,
+  targetWeight: 0.068,
+  noiseWeight: 0.01,
+  groundClearance: 8
+};
+
+const INITIAL_LIGHT_SETTINGS = {
+  intensity: 0.32,
+  distance: 18,
+  decay: 2,
+  pulse: 0.12
+};
+
+const FLOCK_CONTROL_FIELDS = [
+  { key: 'orbitRadius', label: 'Orbit Radius', min: 7, max: 16, step: 0.1, precision: 1 },
+  { key: 'orbitVerticalSpan', label: 'Orbit Height', min: 1.2, max: 5, step: 0.1, precision: 1 },
+  { key: 'perceptionRadius', label: 'Perception', min: 10, max: 30, step: 0.5, precision: 1 },
+  { key: 'cohesionWeight', label: 'Cohesion', min: 0.004, max: 0.05, step: 0.001, precision: 3 },
+  { key: 'alignmentWeight', label: 'Alignment', min: 0.004, max: 0.05, step: 0.001, precision: 3 },
+  { key: 'separationWeight', label: 'Separation', min: 0.03, max: 0.18, step: 0.002, precision: 3 },
+  { key: 'targetWeight', label: 'Target Pull', min: 0.02, max: 0.12, step: 0.001, precision: 3 },
+  { key: 'noiseWeight', label: 'Noise', min: 0, max: 0.04, step: 0.001, precision: 3 },
+  { key: 'minSpeed', label: 'Min Speed', min: 0.08, max: 0.3, step: 0.01, precision: 2 },
+  { key: 'maxSpeed', label: 'Max Speed', min: 0.24, max: 0.6, step: 0.01, precision: 2 }
+];
+
+const LIGHT_CONTROL_FIELDS = [
+  { key: 'intensity', label: 'Light Intensity', min: 0, max: 0.8, step: 0.01, precision: 2 },
+  { key: 'distance', label: 'Light Distance', min: 6, max: 28, step: 0.5, precision: 1 },
+  { key: 'decay', label: 'Light Decay', min: 1, max: 3, step: 0.1, precision: 1 },
+  { key: 'pulse', label: 'Pulse', min: 0, max: 0.35, step: 0.01, precision: 2 }
+];
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
+
 const App = () => {
   const containerRef = useRef();
   const [progress, setProgress] = useState(0);
@@ -8,6 +55,11 @@ const App = () => {
   const [isWon, setIsWon] = useState(false);
   const [isAiming, setIsAiming] = useState(false);
   const [isTouchDevice, setIsTouchDevice] = useState(false);
+  const [flockSettings, setFlockSettings] = useState(INITIAL_FLOCK_SETTINGS);
+  const [lightSettings, setLightSettings] = useState(INITIAL_LIGHT_SETTINGS);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const flockSettingsRef = useRef(INITIAL_FLOCK_SETTINGS);
+  const lightSettingsRef = useRef(INITIAL_LIGHT_SETTINGS);
 
   // 核心配置
   const CONFIG = {
@@ -33,23 +85,30 @@ const App = () => {
     fire: 0xef4444
   };
 
-  const FLOCK = {
-    shrineAirLift: 12,
-    startShrineAirLift: 10,
-    orbitRadius: 12,
-    orbitVerticalSpan: 3.2,
-    orbitSpeed: 0.001,
-    orbitHoldDistance: 42,
-    perceptionRadius: 16,
-    minSpeed: 0.18,
-    maxSpeed: 0.42,
-    cohesionWeight: 0.013,
-    alignmentWeight: 0.026,
-    separationWeight: 0.15,
-    targetWeight: 0.055,
-    noiseWeight: 0.022,
-    groundClearance: 8
+  const isLocalPreview = import.meta.env.DEV && typeof window !== 'undefined' && LOCAL_HOSTS.has(window.location.hostname);
+
+  useEffect(() => {
+    flockSettingsRef.current = flockSettings;
+  }, [flockSettings]);
+
+  useEffect(() => {
+    lightSettingsRef.current = lightSettings;
+  }, [lightSettings]);
+
+  const updateFlockSetting = (key, value) => {
+    setFlockSettings(prev => ({ ...prev, [key]: value }));
   };
+
+  const updateLightSetting = (key, value) => {
+    setLightSettings(prev => ({ ...prev, [key]: value }));
+  };
+
+  const resetTuning = () => {
+    setFlockSettings(INITIAL_FLOCK_SETTINGS);
+    setLightSettings(INITIAL_LIGHT_SETTINGS);
+  };
+
+  const formatPanelValue = (value, precision) => Number(value).toFixed(precision);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(pointer: coarse)');
@@ -68,12 +127,17 @@ const App = () => {
   useEffect(() => {
     if (!containerRef.current) return;
 
+    let animationFrameId = 0;
+    let disposed = false;
+
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
     // --- 1. 场景基础 ---
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(COLORS.skyTwilight);
     scene.fog = new THREE.FogExp2(COLORS.fogColor, 0.006);
+    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x111122, 1.1);
+    scene.add(hemisphereLight);
 
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -177,8 +241,9 @@ const App = () => {
         shrine.userData = { id: obeliskGroups.length };
         group.add(shrine);
         interactables.push(shrine);
+        const flock = flockSettingsRef.current;
         const shrinePos = new THREE.Vector3(x, h + 1.5, z + 12);
-        const shrineAirPos = shrinePos.clone().add(new THREE.Vector3(0, FLOCK.shrineAirLift, 0));
+        const shrineAirPos = shrinePos.clone().add(new THREE.Vector3(0, flock.shrineAirLift, 0));
 
         // 神龛辉光
         const shrineGlow = createBloomSprite(COLORS.pink, 12);
@@ -197,7 +262,7 @@ const App = () => {
         group.add(glow);
         scene.add(group);
         const shrinePos = new THREE.Vector3(x, h + 1.75, z);
-        const shrineAirPos = shrinePos.clone().add(new THREE.Vector3(0, FLOCK.startShrineAirLift, 0));
+        const shrineAirPos = shrinePos.clone().add(new THREE.Vector3(0, flockSettingsRef.current.startShrineAirLift, 0));
         obeliskGroups.push({ pillar: null, shrine: startShrine, tipGlow: glow, shrineGlow: glow, pos: new THREE.Vector3(x, h, z), tipPos: new THREE.Vector3(x, h+5, z), shrinePos, shrineAirPos, activated: true });
       }
     };
@@ -208,19 +273,22 @@ const App = () => {
     // --- 5. 萤火虫及其渐变拖尾 ---
     class Firefly {
       constructor(spawnCenter, index) {
+        const flock = flockSettingsRef.current;
+        const light = lightSettingsRef.current;
         this.mesh = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
         this.index = index;
         this.orbitOffset = Math.random() * Math.PI * 2;
-        this.orbitRadius = FLOCK.orbitRadius + (Math.random() - 0.5) * 4;
+        this.orbitRadius = flock.orbitRadius + (Math.random() - 0.5) * 2.4;
         this.orbitDirection = Math.random() > 0.5 ? 1 : -1;
         this.turnRate = 0.032 + Math.random() * 0.018;
-        this.cruiseSpeed = 0.22 + Math.random() * 0.08;
+        this.cruiseSpeed = THREE.MathUtils.lerp(flock.minSpeed, flock.maxSpeed, 0.36 + Math.random() * 0.28);
         this.speed = this.cruiseSpeed;
         this.noiseSeed = Math.random() * 1000;
+        this.lightPhase = Math.random() * Math.PI * 2;
         const spawnOffset = new THREE.Vector3(
-          (Math.random() - 0.5) * 10,
-          (Math.random() - 0.5) * 4,
-          (Math.random() - 0.5) * 10
+          (Math.random() - 0.5) * 6.5,
+          (Math.random() - 0.5) * 3,
+          (Math.random() - 0.5) * 6.5
         );
         this.pos = spawnCenter.clone().add(spawnOffset);
         this.forward = new THREE.Vector3(
@@ -262,21 +330,26 @@ const App = () => {
         });
 
         this.line = new THREE.Line(this.trailGeo, this.trailMat);
+        this.localLight = new THREE.PointLight(COLORS.blue, light.intensity, light.distance, light.decay);
+        this.localLight.position.copy(this.pos);
         this.mesh.position.copy(this.pos);
         
         scene.add(this.mesh);
         scene.add(this.line);
+        scene.add(this.localLight);
       }
 
       update(flockState, others, time) {
+        const flock = flockSettingsRef.current;
+        const light = lightSettingsRef.current;
         const cohesion = new THREE.Vector3();
         const separation = new THREE.Vector3();
         const alignment = new THREE.Vector3();
         let count = 0;
         others.forEach(o => {
           const d = this.pos.distanceTo(o.pos);
-          if (d > 0 && d < FLOCK.perceptionRadius) {
-            const separationWeight = 1 - d / FLOCK.perceptionRadius;
+          if (d > 0 && d < flock.perceptionRadius) {
+            const separationWeight = 1 - d / flock.perceptionRadius;
             cohesion.add(o.pos);
             alignment.add(o.forward);
             separation.add(this.pos.clone().sub(o.pos).normalize().multiplyScalar(separationWeight));
@@ -285,14 +358,14 @@ const App = () => {
         });
 
         if (count > 0) {
-          cohesion.divideScalar(count).sub(this.pos).multiplyScalar(FLOCK.cohesionWeight);
-          alignment.divideScalar(count).sub(this.forward).multiplyScalar(FLOCK.alignmentWeight);
-          separation.divideScalar(count).multiplyScalar(FLOCK.separationWeight);
+          cohesion.divideScalar(count).sub(this.pos).multiplyScalar(flock.cohesionWeight);
+          alignment.divideScalar(count).sub(this.forward).multiplyScalar(flock.alignmentWeight);
+          separation.divideScalar(count).multiplyScalar(flock.separationWeight);
         }
 
         let navigation = new THREE.Vector3();
         if (flockState.mode === 'orbit') {
-          const angle = time * FLOCK.orbitSpeed * this.orbitDirection + this.orbitOffset;
+          const angle = time * flock.orbitSpeed * this.orbitDirection + this.orbitOffset;
           const orbitPoint = flockState.center.clone().add(new THREE.Vector3(
             Math.cos(angle) * this.orbitRadius,
             Math.sin(time * 0.0017 + this.orbitOffset) * flockState.verticalSpan,
@@ -303,16 +376,16 @@ const App = () => {
             0,
             Math.cos(angle) * this.orbitDirection
           ).multiplyScalar(this.orbitRadius * 0.4);
-          navigation.copy(orbitPoint.add(tangent).sub(this.pos)).multiplyScalar(FLOCK.targetWeight);
+          navigation.copy(orbitPoint.add(tangent).sub(this.pos)).multiplyScalar(flock.targetWeight);
         } else {
-          navigation.copy(flockState.destination).sub(this.pos).multiplyScalar(FLOCK.targetWeight);
+          navigation.copy(flockState.destination).sub(this.pos).multiplyScalar(flock.targetWeight);
         }
 
         const noise = new THREE.Vector3(
           Math.sin(time * 0.0012 + this.noiseSeed),
           Math.sin(time * 0.0017 + this.noiseSeed * 1.7) * 0.35,
           Math.cos(time * 0.001 + this.noiseSeed * 0.7)
-        ).multiplyScalar(FLOCK.noiseWeight);
+        ).multiplyScalar(flock.noiseWeight);
 
         const desiredForward = this.forward.clone()
           .add(navigation)
@@ -329,11 +402,11 @@ const App = () => {
         const desiredSpeed = flockState.mode === 'orbit'
           ? this.cruiseSpeed * 0.92
           : this.cruiseSpeed * 1.06;
-        this.speed = THREE.MathUtils.lerp(this.speed, clamp(desiredSpeed, FLOCK.minSpeed, FLOCK.maxSpeed), 0.04);
+        this.speed = THREE.MathUtils.lerp(this.speed, clamp(desiredSpeed, flock.minSpeed, flock.maxSpeed), 0.04);
         this.vel.copy(this.forward).multiplyScalar(this.speed);
         this.pos.add(this.vel);
 
-        const minHeight = getH(this.pos.x, this.pos.z) + FLOCK.groundClearance;
+        const minHeight = getH(this.pos.x, this.pos.z) + flock.groundClearance;
         if (this.pos.y < minHeight) {
           this.pos.y = THREE.MathUtils.lerp(this.pos.y, minHeight, 0.28);
           this.forward.y = Math.abs(this.forward.y) + 0.18;
@@ -341,12 +414,26 @@ const App = () => {
         }
 
         this.mesh.position.copy(this.pos);
+        this.localLight.position.copy(this.pos);
+        this.localLight.intensity = light.intensity * (0.82 + Math.sin(time * 0.006 + this.lightPhase) * light.pulse);
+        this.localLight.distance = light.distance;
+        this.localLight.decay = light.decay;
 
         // 更新轨迹
         for(let i=CONFIG.trailLength-1; i>0; i--) this.trailPoints[i].copy(this.trailPoints[i-1]);
         this.trailPoints[0].copy(this.pos);
         this.trailGeo.setFromPoints(this.trailPoints);
         this.trailGeo.attributes.position.needsUpdate = true;
+      }
+
+      dispose() {
+        scene.remove(this.mesh);
+        scene.remove(this.line);
+        scene.remove(this.localLight);
+        this.mesh.geometry.dispose();
+        this.mesh.material.dispose();
+        this.trailGeo.dispose();
+        this.trailMat.dispose();
       }
     }
 
@@ -506,7 +593,8 @@ const App = () => {
 
     // --- 7. 渲染循环 ---
     const animate = () => {
-      requestAnimationFrame(animate);
+      if (disposed) return;
+      animationFrameId = requestAnimationFrame(animate);
 
       const keyboardAxes = getKeyboardAxes();
       if (keyboardAxes.turn !== 0) player.yaw += keyboardAxes.turn * KEYBOARD_TURN_SPEED;
@@ -539,12 +627,13 @@ const App = () => {
         }
       });
       const now = Date.now();
-      const playerNearActiveShrine = player.pos.distanceTo(activeShrine.shrinePos) < FLOCK.orbitHoldDistance;
+      const flock = flockSettingsRef.current;
+      const playerNearActiveShrine = player.pos.distanceTo(activeShrine.shrinePos) < flock.orbitHoldDistance;
       const flockState = !targetOb || playerNearActiveShrine
         ? {
             mode: 'orbit',
             center: activeShrine.shrineAirPos,
-            verticalSpan: FLOCK.orbitVerticalSpan
+            verticalSpan: flock.orbitVerticalSpan
           }
         : {
             mode: 'travel',
@@ -601,14 +690,17 @@ const App = () => {
       // 十字准星交互
       const ray = new THREE.Raycaster(); ray.setFromCamera(new THREE.Vector2(0,0), camera);
       const hit = ray.intersectObjects(interactables);
-      setIsAiming(hit.length > 0 && player.pos.distanceTo(hit[0].object.parent.position) < CONFIG.interactDist);
+      const nextIsAiming = hit.length > 0 && player.pos.distanceTo(hit[0].object.parent.position) < CONFIG.interactDist;
+      setIsAiming(prev => (prev === nextIsAiming ? prev : nextIsAiming));
 
       renderer.render(scene, camera);
     };
     animate();
 
-    scene.add(new THREE.HemisphereLight(0xffffff, 0x111122, 1.1));
     return () => {
+      disposed = true;
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      fireflies.forEach(firefly => firefly.dispose());
       window.removeEventListener('touchstart', onStart);
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onEnd);
@@ -637,11 +729,89 @@ const App = () => {
         <p className="text-[9px] opacity-40">Follow the celestial threads</p>
       </div>
 
-      <div className="absolute top-14 right-10 flex flex-col items-end">
+      <div className="absolute top-14 right-10 z-20 flex flex-col items-end gap-3">
+        {isLocalPreview && (
+          <div className="pointer-events-auto flex items-center gap-3">
+            <button
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                setIsPanelOpen(open => !open);
+              }}
+              className="rounded-full border border-cyan-200/25 bg-cyan-300/10 px-5 py-3 text-[10px] uppercase tracking-[0.35em] text-cyan-100 backdrop-blur-3xl transition hover:bg-cyan-300/16"
+            >
+              {isPanelOpen ? 'Hide Tuner' : 'Tune Flock'}
+            </button>
+          </div>
+        )}
         <div className="bg-white/5 backdrop-blur-3xl border border-white/10 rounded-full px-8 py-3 text-white flex items-center gap-4">
           <span className="text-[10px] opacity-25 tracking-widest">SIGILS</span>
           <span className="text-2xl font-bold">{progress} / {total}</span>
         </div>
+
+        {isLocalPreview && isPanelOpen && (
+          <div className="pointer-events-auto w-[min(26rem,calc(100vw-2.5rem))] rounded-[2rem] border border-white/10 bg-slate-950/65 p-5 text-white shadow-[0_18px_80px_rgba(0,0,0,0.45)] backdrop-blur-3xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.35em] text-cyan-200/70">Localhost only</p>
+                <h2 className="mt-2 text-sm font-semibold uppercase tracking-[0.25em] text-white/90">Flock Tuner</h2>
+              </div>
+              <button
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  resetTuning();
+                }}
+                className="rounded-full border border-white/10 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-white/75 transition hover:bg-white/8"
+              >
+                Reset
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-4">
+              {FLOCK_CONTROL_FIELDS.map(field => (
+                <label key={field.key} className="block">
+                  <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/55">
+                    <span>{field.label}</span>
+                    <span className="text-white/95">{formatPanelValue(flockSettings[field.key], field.precision)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={field.min}
+                    max={field.max}
+                    step={field.step}
+                    value={flockSettings[field.key]}
+                    onChange={(e) => updateFlockSetting(field.key, Number(e.target.value))}
+                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-cyan-300"
+                  />
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-5 border-t border-white/10 pt-5">
+              <p className="mb-4 text-[10px] uppercase tracking-[0.3em] text-amber-100/70">Light</p>
+              <div className="grid gap-4">
+                {LIGHT_CONTROL_FIELDS.map(field => (
+                  <label key={field.key} className="block">
+                    <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-[0.2em] text-white/55">
+                      <span>{field.label}</span>
+                      <span className="text-white/95">{formatPanelValue(lightSettings[field.key], field.precision)}</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={field.min}
+                      max={field.max}
+                      step={field.step}
+                      value={lightSettings[field.key]}
+                      onChange={(e) => updateLightSetting(field.key, Number(e.target.value))}
+                      className="h-2 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-amber-300"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <pre className="mt-5 overflow-x-auto rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-[11px] leading-6 text-cyan-100/85">{JSON.stringify({ flockSettings, lightSettings }, null, 2)}</pre>
+          </div>
+        )}
       </div>
 
       {/* 准星 */}
