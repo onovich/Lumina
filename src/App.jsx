@@ -7,6 +7,7 @@ const App = () => {
   const [total, setTotal] = useState(0);
   const [isWon, setIsWon] = useState(false);
   const [isAiming, setIsAiming] = useState(false);
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
 
   // 核心配置
   const CONFIG = {
@@ -31,6 +32,38 @@ const App = () => {
     glow: 0x60a5fa,
     fire: 0xef4444
   };
+
+  const FLOCK = {
+    shrineAirLift: 12,
+    startShrineAirLift: 10,
+    orbitRadius: 12,
+    orbitVerticalSpan: 3.2,
+    orbitSpeed: 0.001,
+    orbitHoldDistance: 42,
+    perceptionRadius: 16,
+    minSpeed: 0.18,
+    maxSpeed: 0.42,
+    cohesionWeight: 0.013,
+    alignmentWeight: 0.026,
+    separationWeight: 0.15,
+    targetWeight: 0.055,
+    noiseWeight: 0.022,
+    groundClearance: 8
+  };
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(pointer: coarse)');
+    const updateInputMode = () => {
+      setIsTouchDevice(mediaQuery.matches || navigator.maxTouchPoints > 0);
+    };
+
+    updateInputMode();
+    mediaQuery.addEventListener?.('change', updateInputMode);
+
+    return () => {
+      mediaQuery.removeEventListener?.('change', updateInputMode);
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -144,6 +177,8 @@ const App = () => {
         shrine.userData = { id: obeliskGroups.length };
         group.add(shrine);
         interactables.push(shrine);
+        const shrinePos = new THREE.Vector3(x, h + 1.5, z + 12);
+        const shrineAirPos = shrinePos.clone().add(new THREE.Vector3(0, FLOCK.shrineAirLift, 0));
 
         // 神龛辉光
         const shrineGlow = createBloomSprite(COLORS.pink, 12);
@@ -151,7 +186,7 @@ const App = () => {
         group.add(shrineGlow);
 
         scene.add(group);
-        obeliskGroups.push({ pillar, shrine, tipGlow, shrineGlow, pos: new THREE.Vector3(x, h, z), tipPos: new THREE.Vector3(x, h + CONFIG.obeliskHeight + 2, z), shrinePos: new THREE.Vector3(x, h + 1.5, z + 12), activated: false });
+        obeliskGroups.push({ pillar, shrine, tipGlow, shrineGlow, pos: new THREE.Vector3(x, h, z), tipPos: new THREE.Vector3(x, h + CONFIG.obeliskHeight + 2, z), shrinePos, shrineAirPos, activated: false });
       } else {
         const startShrine = new THREE.Mesh(new THREE.BoxGeometry(3.5, 3.5, 3.5), new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.0 }));
         startShrine.position.set(0, 1.75, 0);
@@ -161,7 +196,9 @@ const App = () => {
         glow.material.opacity = 0.5;
         group.add(glow);
         scene.add(group);
-        obeliskGroups.push({ pillar: null, shrine: startShrine, tipGlow: glow, shrineGlow: glow, pos: new THREE.Vector3(x, h, z), tipPos: new THREE.Vector3(x, h+5, z), shrinePos: new THREE.Vector3(x, h+1.75, z), activated: true });
+        const shrinePos = new THREE.Vector3(x, h + 1.75, z);
+        const shrineAirPos = shrinePos.clone().add(new THREE.Vector3(0, FLOCK.startShrineAirLift, 0));
+        obeliskGroups.push({ pillar: null, shrine: startShrine, tipGlow: glow, shrineGlow: glow, pos: new THREE.Vector3(x, h, z), tipPos: new THREE.Vector3(x, h+5, z), shrinePos, shrineAirPos, activated: true });
       }
     };
 
@@ -170,12 +207,32 @@ const App = () => {
 
     // --- 5. 萤火虫及其渐变拖尾 ---
     class Firefly {
-      constructor() {
+      constructor(spawnCenter, index) {
         this.mesh = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+        this.index = index;
+        this.orbitOffset = Math.random() * Math.PI * 2;
+        this.orbitRadius = FLOCK.orbitRadius + (Math.random() - 0.5) * 4;
+        this.orbitDirection = Math.random() > 0.5 ? 1 : -1;
+        this.turnRate = 0.032 + Math.random() * 0.018;
+        this.cruiseSpeed = 0.22 + Math.random() * 0.08;
+        this.speed = this.cruiseSpeed;
+        this.noiseSeed = Math.random() * 1000;
+        const spawnOffset = new THREE.Vector3(
+          (Math.random() - 0.5) * 10,
+          (Math.random() - 0.5) * 4,
+          (Math.random() - 0.5) * 10
+        );
+        this.pos = spawnCenter.clone().add(spawnOffset);
+        this.forward = new THREE.Vector3(
+          Math.random() - 0.5,
+          (Math.random() - 0.5) * 0.2,
+          Math.random() - 0.5
+        ).normalize();
+        this.vel = this.forward.clone().multiplyScalar(this.speed);
         
         // 拖尾：使用 ShaderMaterial 实现 alpha 渐变
         this.trailPoints = [];
-        for(let i=0; i<CONFIG.trailLength; i++) this.trailPoints.push(new THREE.Vector3(0, 0, 0));
+        for(let i=0; i<CONFIG.trailLength; i++) this.trailPoints.push(this.pos.clone());
         
         const alphas = new Float32Array(CONFIG.trailLength);
         for(let i=0; i<CONFIG.trailLength; i++) alphas[i] = 1.0 - (i / CONFIG.trailLength);
@@ -205,38 +262,84 @@ const App = () => {
         });
 
         this.line = new THREE.Line(this.trailGeo, this.trailMat);
-        this.pos = new THREE.Vector3(0, 20, 0);
-        this.vel = new THREE.Vector3();
-        this.acc = new THREE.Vector3();
+        this.mesh.position.copy(this.pos);
         
         scene.add(this.mesh);
         scene.add(this.line);
       }
 
-      update(target, others) {
-        // Boids 
+      update(flockState, others, time) {
         const cohesion = new THREE.Vector3();
         const separation = new THREE.Vector3();
         const alignment = new THREE.Vector3();
         let count = 0;
         others.forEach(o => {
           const d = this.pos.distanceTo(o.pos);
-          if (d > 0 && d < 12) {
-            cohesion.add(o.pos); alignment.add(o.vel);
-            separation.add(this.pos.clone().sub(o.pos).divideScalar(d));
+          if (d > 0 && d < FLOCK.perceptionRadius) {
+            const separationWeight = 1 - d / FLOCK.perceptionRadius;
+            cohesion.add(o.pos);
+            alignment.add(o.forward);
+            separation.add(this.pos.clone().sub(o.pos).normalize().multiplyScalar(separationWeight));
             count++;
           }
         });
+
         if (count > 0) {
-          cohesion.divideScalar(count).sub(this.pos).multiplyScalar(0.01);
-          alignment.divideScalar(count).sub(this.vel).multiplyScalar(0.04);
-          separation.divideScalar(count).multiplyScalar(0.12);
+          cohesion.divideScalar(count).sub(this.pos).multiplyScalar(FLOCK.cohesionWeight);
+          alignment.divideScalar(count).sub(this.forward).multiplyScalar(FLOCK.alignmentWeight);
+          separation.divideScalar(count).multiplyScalar(FLOCK.separationWeight);
         }
-        const goal = target.clone().sub(this.pos).multiplyScalar(0.03);
-        this.acc.add(cohesion).add(separation).add(alignment).add(goal);
-        this.vel.add(this.acc).clampLength(0, 0.45);
+
+        let navigation = new THREE.Vector3();
+        if (flockState.mode === 'orbit') {
+          const angle = time * FLOCK.orbitSpeed * this.orbitDirection + this.orbitOffset;
+          const orbitPoint = flockState.center.clone().add(new THREE.Vector3(
+            Math.cos(angle) * this.orbitRadius,
+            Math.sin(time * 0.0017 + this.orbitOffset) * flockState.verticalSpan,
+            Math.sin(angle) * this.orbitRadius
+          ));
+          const tangent = new THREE.Vector3(
+            -Math.sin(angle) * this.orbitDirection,
+            0,
+            Math.cos(angle) * this.orbitDirection
+          ).multiplyScalar(this.orbitRadius * 0.4);
+          navigation.copy(orbitPoint.add(tangent).sub(this.pos)).multiplyScalar(FLOCK.targetWeight);
+        } else {
+          navigation.copy(flockState.destination).sub(this.pos).multiplyScalar(FLOCK.targetWeight);
+        }
+
+        const noise = new THREE.Vector3(
+          Math.sin(time * 0.0012 + this.noiseSeed),
+          Math.sin(time * 0.0017 + this.noiseSeed * 1.7) * 0.35,
+          Math.cos(time * 0.001 + this.noiseSeed * 0.7)
+        ).multiplyScalar(FLOCK.noiseWeight);
+
+        const desiredForward = this.forward.clone()
+          .add(navigation)
+          .add(cohesion)
+          .add(alignment)
+          .add(separation)
+          .add(noise);
+
+        if (desiredForward.lengthSq() > 0) {
+          desiredForward.normalize();
+          this.forward.lerp(desiredForward, this.turnRate).normalize();
+        }
+
+        const desiredSpeed = flockState.mode === 'orbit'
+          ? this.cruiseSpeed * 0.92
+          : this.cruiseSpeed * 1.06;
+        this.speed = THREE.MathUtils.lerp(this.speed, clamp(desiredSpeed, FLOCK.minSpeed, FLOCK.maxSpeed), 0.04);
+        this.vel.copy(this.forward).multiplyScalar(this.speed);
         this.pos.add(this.vel);
-        this.acc.multiplyScalar(0);
+
+        const minHeight = getH(this.pos.x, this.pos.z) + FLOCK.groundClearance;
+        if (this.pos.y < minHeight) {
+          this.pos.y = THREE.MathUtils.lerp(this.pos.y, minHeight, 0.28);
+          this.forward.y = Math.abs(this.forward.y) + 0.18;
+          this.forward.normalize();
+        }
+
         this.mesh.position.copy(this.pos);
 
         // 更新轨迹
@@ -248,7 +351,8 @@ const App = () => {
     }
 
     const fireflies = [];
-    for(let i=0; i<CONFIG.fireflyCount; i++) fireflies.push(new Firefly());
+    const initialFlockCenter = obeliskGroups[0].shrineAirPos;
+    for(let i=0; i<CONFIG.fireflyCount; i++) fireflies.push(new Firefly(initialFlockCenter, i));
 
     // --- 6. 输入系统 ---
     const touchInput = { moveX: 0, moveY: 0 };
@@ -424,20 +528,29 @@ const App = () => {
       camera.rotation.set(player.pitch, player.yaw, 0, 'YXZ');
 
       // 更新萤火虫与目标
-      let lastLitShrine = obeliskGroups[0].shrinePos;
-      let targetOb = obeliskGroups[0];
+      let activeShrine = obeliskGroups[0];
+      let targetOb = null;
       let minD = Infinity;
       obeliskGroups.forEach(ob => {
-        if(ob.activated) lastLitShrine = ob.shrinePos;
+        if(ob.activated) activeShrine = ob;
         else {
           const d = player.pos.distanceTo(ob.pos);
           if(d < minD) { minD = d; targetOb = ob; }
         }
       });
-      // 垂直路径引导：在神龛和方尖碑顶部循环
-      const t = Math.sin(Date.now() * 0.0006) * 0.5 + 0.5;
-      const swarmGoal = new THREE.Vector3().lerpVectors(lastLitShrine, targetOb.tipPos, t);
-      fireflies.forEach(f => f.update(swarmGoal, fireflies));
+      const now = Date.now();
+      const playerNearActiveShrine = player.pos.distanceTo(activeShrine.shrinePos) < FLOCK.orbitHoldDistance;
+      const flockState = !targetOb || playerNearActiveShrine
+        ? {
+            mode: 'orbit',
+            center: activeShrine.shrineAirPos,
+            verticalSpan: FLOCK.orbitVerticalSpan
+          }
+        : {
+            mode: 'travel',
+            destination: targetOb.tipPos
+          };
+      fireflies.forEach(f => f.update(flockState, fireflies, now));
 
       // 视觉动效与辉光
       let skyL = 0.6;
@@ -541,24 +654,59 @@ const App = () => {
       {/* 交互提示 */}
       <div className={`absolute bottom-24 left-1/2 -translate-x-1/2 transition-all duration-700 ${isAiming ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6 pointer-events-none'}`}>
         <div className="bg-white/10 backdrop-blur-xl border border-white/20 px-10 py-3 rounded-full text-white text-[10px] tracking-[0.4em] uppercase flex items-center gap-3">
-          <span>Space / Click / Tap to Ignite</span>
+          {isTouchDevice ? (
+            <span className="flex items-center gap-3">
+              <strong className="font-semibold text-white">Ignite</strong>
+              <span className="text-white/60 tracking-[0.2em]">Tap Right Half</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-3">
+              <strong className="font-semibold text-white">Ignite</strong>
+              <span className="text-white/60 tracking-[0.2em]">Space / Click</span>
+            </span>
+          )}
           <div className="w-2 h-2 bg-white rounded-full animate-ping" />
         </div>
       </div>
 
-      <div className="absolute bottom-8 left-8 right-8 flex justify-between gap-4 text-white/75 text-[10px] tracking-[0.25em] uppercase pointer-events-none">
-        <div className="max-w-sm rounded-3xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-2xl">
-          <p className="text-white/35">Desktop</p>
-          <p className="mt-2 leading-relaxed">WASD / Arrows Move</p>
-          <p className="leading-relaxed">Q / E Rotate</p>
-          <p className="leading-relaxed">Mouse Look</p>
-          <p className="leading-relaxed">Space / Click Interact</p>
-        </div>
-        <div className="max-w-sm rounded-3xl border border-white/10 bg-white/5 px-5 py-4 text-right backdrop-blur-2xl">
-          <p className="text-white/35">Touch</p>
-          <p className="mt-2 leading-relaxed">Left Half Drag Move</p>
-          <p className="leading-relaxed">Right Half Drag Look</p>
-          <p className="leading-relaxed">Right Half Tap Interact</p>
+      <div className={`absolute bottom-8 left-8 right-8 flex ${isTouchDevice ? 'justify-end' : 'justify-start'} text-white/75 text-[10px] tracking-[0.25em] uppercase pointer-events-none`}>
+        <div className={`max-w-sm rounded-3xl border border-white/10 bg-white/5 px-5 py-4 backdrop-blur-2xl ${isTouchDevice ? 'text-right' : ''}`}>
+          <p className="text-white/35">{isTouchDevice ? 'Touch' : 'Desktop'}</p>
+          {isTouchDevice ? (
+            <>
+              <p className="mt-2 leading-relaxed">
+                <strong className="font-semibold text-white">Move</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">Drag Left Half</span>
+              </p>
+              <p className="leading-relaxed">
+                <strong className="font-semibold text-white">Look</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">Drag Right Half</span>
+              </p>
+              <p className="leading-relaxed">
+                <strong className="font-semibold text-white">Interact</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">Tap Right Half</span>
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 leading-relaxed">
+                <strong className="font-semibold text-white">Move</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">WASD / Arrows</span>
+              </p>
+              <p className="leading-relaxed">
+                <strong className="font-semibold text-white">Rotate</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">Q / E</span>
+              </p>
+              <p className="leading-relaxed">
+                <strong className="font-semibold text-white">Look</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">Mouse</span>
+              </p>
+              <p className="leading-relaxed">
+                <strong className="font-semibold text-white">Interact</strong>
+                <span className="ml-3 text-white/60 tracking-[0.15em]">Space / Click</span>
+              </p>
+            </>
+          )}
         </div>
       </div>
 
