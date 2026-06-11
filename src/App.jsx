@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { createLuminaSoundscape } from './audio/soundscape';
 
 const INITIAL_FLOCK_SETTINGS = {
   shrineAirLift: 12,
@@ -129,6 +130,7 @@ const App = () => {
 
     let animationFrameId = 0;
     let disposed = false;
+    const soundscape = createLuminaSoundscape();
 
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -198,6 +200,156 @@ const App = () => {
       const sprite = new THREE.Sprite(mat);
       sprite.scale.set(size, size, 1);
       return sprite;
+    };
+
+    const createSkyCreaturePath = (ctx, width, height, time) => {
+      const drift = Math.sin(time * 1.25) * 8;
+      const lift = Math.cos(time * 0.85) * 5;
+
+      ctx.beginPath();
+      ctx.moveTo(width * 0.08, height * 0.52 + drift * 0.25);
+      ctx.bezierCurveTo(width * 0.16, height * 0.16 + lift, width * 0.36, height * 0.16 - drift, width * 0.58, height * 0.23);
+      ctx.bezierCurveTo(width * 0.76, height * 0.29 + lift, width * 0.91, height * 0.39, width * 0.96, height * 0.51);
+      ctx.bezierCurveTo(width * 0.89, height * 0.63 + drift, width * 0.73, height * 0.72 + lift, width * 0.55, height * 0.75);
+      ctx.bezierCurveTo(width * 0.32, height * 0.81 + drift, width * 0.16, height * 0.73, width * 0.08, height * 0.52 + drift * 0.25);
+      ctx.closePath();
+    };
+
+    const drawSkyCreatureTexture = (ctx, width, height, time) => {
+      ctx.clearRect(0, 0, width, height);
+      ctx.save();
+      createSkyCreaturePath(ctx, width, height, time);
+      ctx.clip();
+
+      ctx.fillStyle = 'rgba(5, 12, 30, 0.18)';
+      ctx.fillRect(0, 0, width, height);
+
+      const blobs = [
+        { x: 0.28, y: 0.38, r: 0.48, rgb: '162, 210, 255', speed: 0.9 },
+        { x: 0.56, y: 0.56, r: 0.54, rgb: '255, 175, 204', speed: 1.2 },
+        { x: 0.76, y: 0.42, r: 0.42, rgb: '96, 165, 250', speed: 0.7 },
+        { x: 0.38, y: 0.67, r: 0.38, rgb: '212, 196, 168', speed: 1.0 }
+      ];
+
+      ctx.globalCompositeOperation = 'lighter';
+      blobs.forEach((blob, index) => {
+        const wobbleX = Math.sin(time * blob.speed + index * 1.7) * width * 0.08;
+        const wobbleY = Math.cos(time * (blob.speed + 0.25) + index) * height * 0.08;
+        const x = width * blob.x + wobbleX;
+        const y = height * blob.y + wobbleY;
+        const radius = Math.max(width, height) * blob.r;
+        const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+
+        gradient.addColorStop(0, `rgba(${blob.rgb}, 0.78)`);
+        gradient.addColorStop(0.45, `rgba(${blob.rgb}, 0.22)`);
+        gradient.addColorStop(1, `rgba(${blob.rgb}, 0)`);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, width, height);
+      });
+
+      ctx.globalCompositeOperation = 'source-over';
+      for (let i = 0; i < 9; i += 1) {
+        const y = height * (0.33 + i * 0.045);
+        const wave = Math.sin(time * 1.1 + i * 0.8) * 18;
+        ctx.beginPath();
+        ctx.moveTo(width * 0.16, y);
+        ctx.bezierCurveTo(width * 0.36, y - 34 + wave, width * 0.58, y + 32 - wave, width * 0.86, y + wave * 0.35);
+        ctx.strokeStyle = `rgba(226, 246, 255, ${0.16 - i * 0.008})`;
+        ctx.lineWidth = 1.4;
+        ctx.stroke();
+      }
+
+      ctx.restore();
+      ctx.save();
+      createSkyCreaturePath(ctx, width, height, time);
+      ctx.strokeStyle = 'rgba(212, 241, 255, 0.28)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      ctx.restore();
+    };
+
+    const createSkyCreature = () => {
+      const creatureCanvas = document.createElement('canvas');
+      creatureCanvas.width = 512;
+      creatureCanvas.height = 256;
+      const creatureCtx = creatureCanvas.getContext('2d');
+      const creatureTexture = new THREE.CanvasTexture(creatureCanvas);
+      creatureTexture.minFilter = THREE.LinearFilter;
+      creatureTexture.magFilter = THREE.LinearFilter;
+      creatureTexture.needsUpdate = true;
+
+      const creatureMaterial = new THREE.SpriteMaterial({
+        map: creatureTexture,
+        transparent: true,
+        opacity: 0.66,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+
+      const group = new THREE.Group();
+      group.position.set(0, 112, -220);
+
+      const body = new THREE.Sprite(creatureMaterial);
+      body.scale.set(118, 52, 1);
+      group.add(body);
+
+      const tendrilMaterial = new THREE.SpriteMaterial({
+        map: glowTex,
+        color: COLORS.blue,
+        transparent: true,
+        opacity: 0.18,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const tendrils = [];
+      for (let i = 0; i < 7; i += 1) {
+        const tendril = new THREE.Sprite(tendrilMaterial);
+        tendril.position.set(-46 - i * 6, -14 - i * 1.5, -0.2);
+        tendril.scale.set(5 + (i % 3) * 1.8, 32 + i * 4, 1);
+        group.add(tendril);
+        tendrils.push(tendril);
+      }
+
+      const creatureLight = new THREE.PointLight(COLORS.blue, 0.75, 170, 2);
+      group.add(creatureLight);
+      scene.add(group);
+
+      const targetPosition = new THREE.Vector3();
+      const forwardOffset = new THREE.Vector3();
+      const sideOffset = new THREE.Vector3();
+
+      return {
+        update(time, playerPosition, playerYaw) {
+          const seconds = time * 0.001;
+          drawSkyCreatureTexture(creatureCtx, creatureCanvas.width, creatureCanvas.height, seconds);
+          creatureTexture.needsUpdate = true;
+
+          const creatureYaw = playerYaw + Math.sin(seconds * 0.07) * 0.18;
+          forwardOffset.set(-Math.sin(creatureYaw), 0, -Math.cos(creatureYaw)).multiplyScalar(215);
+          sideOffset.set(-Math.cos(playerYaw), 0, Math.sin(playerYaw)).multiplyScalar(48 * Math.sin(seconds * 0.13));
+          targetPosition.copy(playerPosition).add(forwardOffset).add(sideOffset);
+          targetPosition.y = playerPosition.y + 104 + Math.sin(seconds * 0.38) * 16;
+          group.position.lerp(targetPosition, 0.018);
+
+          const pulse = 0.5 + Math.sin(seconds * 1.35) * 0.5;
+          creatureMaterial.opacity = 0.58 + pulse * 0.16;
+          creatureLight.intensity = 0.48 + pulse * 0.28;
+          body.scale.set(118 + Math.sin(seconds * 0.9) * 5, 52 + Math.cos(seconds * 0.7) * 3, 1);
+
+          tendrils.forEach((tendril, index) => {
+            const wave = Math.sin(seconds * (0.82 + index * 0.05) + index * 0.9);
+            tendril.position.x = -44 - index * 6 + Math.cos(seconds * 0.54 + index) * 5;
+            tendril.position.y = -16 - index * 1.6 + wave * 4;
+            tendril.scale.set(5 + (index % 3) * 1.8, 32 + index * 4 + wave * 7, 1);
+          });
+        },
+        dispose() {
+          scene.remove(group);
+          creatureTexture.dispose();
+          creatureMaterial.dispose();
+          tendrilMaterial.dispose();
+        }
+      };
     };
 
     const generateObelisks = () => {
@@ -440,6 +592,7 @@ const App = () => {
     const fireflies = [];
     const initialFlockCenter = obeliskGroups[0].shrineAirPos;
     for(let i=0; i<CONFIG.fireflyCount; i++) fireflies.push(new Firefly(initialFlockCenter, i));
+    const skyCreature = createSkyCreature();
 
     // --- 6. 输入系统 ---
     const touchInput = { moveX: 0, moveY: 0 };
@@ -489,6 +642,12 @@ const App = () => {
           ob.shrine.material.emissiveIntensity = 2.0;
           ob.tipGlow.material.opacity = 0.6;
           ob.shrineGlow.material.opacity = 0.6;
+          const nextProgress = obeliskGroups.reduce((count, item) => count + (item.pillar && item.activated ? 1 : 0), 0);
+          void soundscape.playShrineIgnite({
+            progress: nextProgress,
+            total: CONFIG.obeliskCount,
+            isFinal: nextProgress === CONFIG.obeliskCount
+          });
           setProgress(p => (p + 1 === CONFIG.obeliskCount ? (setIsWon(true), p + 1) : p + 1));
         }
       }
@@ -496,6 +655,7 @@ const App = () => {
 
     const onStart = (e) => {
       e.preventDefault();
+      void soundscape.unlock();
       for (let t of e.changedTouches) {
         if (t.clientX < window.innerWidth / 2) {
           touch.left = t.identifier; touch.lx = t.clientX; touch.ly = t.clientY;
@@ -533,6 +693,7 @@ const App = () => {
       if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
         e.preventDefault();
       }
+      if (!e.repeat) void soundscape.unlock();
       if (Object.hasOwn(keyboard, e.code)) keyboard[e.code] = true;
       if (e.code === 'Space' && !e.repeat) handleAction();
     };
@@ -548,6 +709,7 @@ const App = () => {
 
     const onMouseDown = (e) => {
       if (e.button !== 0) return;
+      void soundscape.unlock();
       mouse.dragging = true;
       mouse.lastX = e.clientX;
       mouse.lastY = e.clientY;
@@ -605,7 +767,8 @@ const App = () => {
       const moveX = clamp(touchInput.moveX + keyboardAxes.moveX, -1, 1);
       const moveY = clamp(touchInput.moveY + keyboardAxes.moveY, -1, 1);
       const dir = new THREE.Vector3().addScaledVector(forward, moveY).addScaledVector(right, -moveX);
-      if (dir.length() > 0) player.pos.addScaledVector(dir.normalize(), CONFIG.moveSpeed);
+      const moveIntent = clamp(dir.length(), 0, 1);
+      if (moveIntent > 0) player.pos.addScaledVector(dir.normalize(), CONFIG.moveSpeed);
 
       const gH = getH(player.pos.x, player.pos.z) + CONFIG.playerHeight;
       player.vel.y -= CONFIG.gravity;
@@ -619,14 +782,19 @@ const App = () => {
       let activeShrine = obeliskGroups[0];
       let targetOb = null;
       let minD = Infinity;
+      let activatedShrineCount = 0;
       obeliskGroups.forEach(ob => {
-        if(ob.activated) activeShrine = ob;
+        if(ob.activated) {
+          activeShrine = ob;
+          if (ob.pillar) activatedShrineCount += 1;
+        }
         else {
           const d = player.pos.distanceTo(ob.pos);
           if(d < minD) { minD = d; targetOb = ob; }
         }
       });
       const now = Date.now();
+      skyCreature.update(now, player.pos, player.yaw);
       const flock = flockSettingsRef.current;
       const playerNearActiveShrine = player.pos.distanceTo(activeShrine.shrinePos) < flock.orbitHoldDistance;
       const flockState = !targetOb || playerNearActiveShrine
@@ -643,6 +811,12 @@ const App = () => {
 
       // 视觉动效与辉光
       let skyL = 0.6;
+      soundscape.update({
+        playerSpeed: moveIntent,
+        progressRatio: activatedShrineCount / CONFIG.obeliskCount,
+        isWon: activatedShrineCount >= CONFIG.obeliskCount
+      });
+
       const colorAttr = geometry.attributes.color;
       const posAttr = geometry.attributes.position;
       let terrainUpdate = false;
@@ -700,7 +874,9 @@ const App = () => {
     return () => {
       disposed = true;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      soundscape.dispose();
       fireflies.forEach(firefly => firefly.dispose());
+      skyCreature.dispose();
       window.removeEventListener('touchstart', onStart);
       window.removeEventListener('touchmove', onMove);
       window.removeEventListener('touchend', onEnd);
