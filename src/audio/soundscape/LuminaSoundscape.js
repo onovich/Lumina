@@ -1,11 +1,18 @@
-import { clamp } from './random.js';
-import { createAmbientBed, createMasterBus, playShrineIgniteVoice } from './synthVoices.js';
+import { clamp, randomBetween } from './random.js';
+import {
+  createAmbientBed,
+  createMasterBus,
+  createSandFootstepLayer,
+  playAmbientAccent,
+  playShrineIgniteVoice
+} from './synthVoices.js';
 
 export class LuminaSoundscape {
   constructor() {
     this.audioContext = null;
     this.masterBus = null;
     this.ambientBed = null;
+    this.footstepLayer = null;
     this.isDisposed = false;
     this.isUnlocked = false;
     this.lastState = {
@@ -13,6 +20,7 @@ export class LuminaSoundscape {
       progressRatio: 0,
       isWon: false
     };
+    this.nextAccentAt = 0;
   }
 
   async unlock() {
@@ -29,6 +37,8 @@ export class LuminaSoundscape {
       this.audioContext = new AudioContextClass();
       this.masterBus = createMasterBus(this.audioContext);
       this.ambientBed = createAmbientBed(this.audioContext, this.masterBus.input);
+      this.footstepLayer = createSandFootstepLayer(this.audioContext, this.masterBus.input);
+      this.nextAccentAt = this.audioContext.currentTime + randomBetween(4, 9);
     }
 
     if (this.audioContext.state !== 'running') {
@@ -52,6 +62,15 @@ export class LuminaSoundscape {
     }
 
     this.ambientBed.update(this.lastState, Date.now());
+    this.footstepLayer?.update(this.lastState);
+
+    const now = this.audioContext.currentTime;
+    if (now >= this.nextAccentAt) {
+      playAmbientAccent(this.audioContext, this.masterBus.input, {
+        progressRatio: this.lastState.progressRatio
+      });
+      this.nextAccentAt = now + randomBetween(4.5, 12) * (1 - this.lastState.progressRatio * 0.25);
+    }
   }
 
   async playShrineIgnite(payload) {
@@ -61,11 +80,13 @@ export class LuminaSoundscape {
     }
 
     playShrineIgniteVoice(this.audioContext, this.masterBus.input, payload);
+    this.ambientBed?.pulse(payload?.isFinal ? 0.78 : 0.45);
   }
 
   dispose() {
     this.isDisposed = true;
     this.ambientBed?.dispose();
+    this.footstepLayer?.dispose();
     this.masterBus?.dispose();
 
     if (this.audioContext && this.audioContext.state !== 'closed') {
@@ -75,6 +96,7 @@ export class LuminaSoundscape {
     this.audioContext = null;
     this.masterBus = null;
     this.ambientBed = null;
+    this.footstepLayer = null;
   }
 }
 
