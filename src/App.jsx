@@ -1,6 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
-import { createLuminaSoundscape } from './audio/soundscape';
+import {
+  SOUND_PREVIEW_OPTIONS,
+  SOUND_TUNING_GROUPS,
+  cloneSoundSettings,
+  createLuminaSoundscape
+} from './audio/soundscape';
+import {
+  DEFAULT_BIONIC_SKY_CREATURE_SETTINGS,
+  createBionicSkyCreature
+} from './visuals/bionicSkyCreature';
 
 const INITIAL_FLOCK_SETTINGS = {
   shrineAirLift: 12,
@@ -47,7 +56,70 @@ const LIGHT_CONTROL_FIELDS = [
   { key: 'pulse', label: 'Pulse', min: 0, max: 0.35, step: 0.01, precision: 2 }
 ];
 
+const INITIAL_CREATURE_SETTINGS = { ...DEFAULT_BIONIC_SKY_CREATURE_SETTINGS };
+
+const CREATURE_CONTROL_SECTIONS = [
+  {
+    title: 'Stability',
+    accent: 'accent-teal-300',
+    fields: [
+      { key: 'evolutionSpeed', label: 'Evolution', min: 0.08, max: 1.2, step: 0.01, precision: 2 },
+      { key: 'pointMotion', label: 'Point Motion', min: 0.05, max: 1.2, step: 0.01, precision: 2 },
+      { key: 'depth', label: 'Depth Drift', min: 0, max: 1.2, step: 0.01, precision: 2 },
+      { key: 'ripple', label: 'Ripple', min: 0, max: 1.2, step: 0.01, precision: 2 }
+    ]
+  },
+  {
+    title: 'Body',
+    accent: 'accent-sky-300',
+    fields: [
+      { key: 'pulse', label: 'Pulse', min: 0, max: 1.2, step: 0.01, precision: 2 },
+      { key: 'bodyWidth', label: 'Width', min: 0.45, max: 1.45, step: 0.01, precision: 2 },
+      { key: 'bodyHeight', label: 'Height', min: 0.24, max: 0.72, step: 0.01, precision: 2 },
+      { key: 'scale', label: 'Scale', min: 0.72, max: 1.4, step: 0.01, precision: 2 },
+      { key: 'pointSize', label: 'Point Size', min: 0.8, max: 4.2, step: 0.01, precision: 2 },
+      { key: 'opacity', label: 'Opacity', min: 0.12, max: 0.9, step: 0.01, precision: 2 }
+    ]
+  },
+  {
+    title: 'Swim',
+    accent: 'accent-indigo-300',
+    fields: [
+      { key: 'swimRange', label: 'Range', min: 0, max: 1.5, step: 0.01, precision: 2 },
+      { key: 'swimSpeed', label: 'Speed', min: 0, max: 1.4, step: 0.01, precision: 2 },
+      { key: 'swimEase', label: 'Ease', min: 0.002, max: 0.06, step: 0.001, precision: 3 }
+    ]
+  },
+  {
+    title: 'Tendrils',
+    accent: 'accent-violet-300',
+    fields: [
+      { key: 'tentacleMotion', label: 'Motion', min: 0, max: 1.4, step: 0.01, precision: 2 },
+      { key: 'tentacleOpacity', label: 'Opacity', min: 0, max: 1.2, step: 0.01, precision: 2 },
+      { key: 'light', label: 'Light', min: 0, max: 1.4, step: 0.01, precision: 2 }
+    ]
+  }
+];
+
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
+
+const getPathValue = (source, path) => path
+  .split('.')
+  .reduce((value, key) => value?.[key], source);
+
+const updatePathValue = (source, path, value) => {
+  const keys = path.split('.');
+  const next = { ...source };
+  let cursor = next;
+
+  keys.slice(0, -1).forEach((key) => {
+    cursor[key] = { ...cursor[key] };
+    cursor = cursor[key];
+  });
+
+  cursor[keys.at(-1)] = value;
+  return next;
+};
 
 const App = () => {
   const containerRef = useRef();
@@ -58,9 +130,17 @@ const App = () => {
   const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [flockSettings, setFlockSettings] = useState(INITIAL_FLOCK_SETTINGS);
   const [lightSettings, setLightSettings] = useState(INITIAL_LIGHT_SETTINGS);
+  const [creatureSettings, setCreatureSettings] = useState(INITIAL_CREATURE_SETTINGS);
+  const [soundSettings, setSoundSettings] = useState(() => cloneSoundSettings());
   const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [isCreaturePanelOpen, setIsCreaturePanelOpen] = useState(false);
+  const [isSoundPanelOpen, setIsSoundPanelOpen] = useState(false);
+  const [soundPanelGroup, setSoundPanelGroup] = useState(SOUND_TUNING_GROUPS[0].id);
   const flockSettingsRef = useRef(INITIAL_FLOCK_SETTINGS);
   const lightSettingsRef = useRef(INITIAL_LIGHT_SETTINGS);
+  const creatureSettingsRef = useRef(INITIAL_CREATURE_SETTINGS);
+  const soundSettingsRef = useRef(soundSettings);
+  const soundscapeRef = useRef(null);
 
   // 核心配置
   const CONFIG = {
@@ -86,7 +166,7 @@ const App = () => {
     fire: 0xef4444
   };
 
-  const isLocalPreview = import.meta.env.DEV && typeof window !== 'undefined' && LOCAL_HOSTS.has(window.location.hostname);
+  const isLocalPreview = typeof window !== 'undefined' && LOCAL_HOSTS.has(window.location.hostname);
 
   useEffect(() => {
     flockSettingsRef.current = flockSettings;
@@ -96,6 +176,15 @@ const App = () => {
     lightSettingsRef.current = lightSettings;
   }, [lightSettings]);
 
+  useEffect(() => {
+    creatureSettingsRef.current = creatureSettings;
+  }, [creatureSettings]);
+
+  useEffect(() => {
+    soundSettingsRef.current = soundSettings;
+    soundscapeRef.current?.setSettings(soundSettings);
+  }, [soundSettings]);
+
   const updateFlockSetting = (key, value) => {
     setFlockSettings(prev => ({ ...prev, [key]: value }));
   };
@@ -104,12 +193,33 @@ const App = () => {
     setLightSettings(prev => ({ ...prev, [key]: value }));
   };
 
+  const updateCreatureSetting = (key, value) => {
+    setCreatureSettings(prev => ({ ...prev, [key]: value }));
+  };
+
   const resetTuning = () => {
     setFlockSettings(INITIAL_FLOCK_SETTINGS);
     setLightSettings(INITIAL_LIGHT_SETTINGS);
   };
 
+  const resetCreatureSettings = () => {
+    setCreatureSettings(INITIAL_CREATURE_SETTINGS);
+  };
+
+  const updateSoundSetting = (path, value) => {
+    setSoundSettings(prev => updatePathValue(prev, path, value));
+  };
+
+  const resetSoundSettings = () => {
+    setSoundSettings(cloneSoundSettings());
+  };
+
+  const previewSound = (effectId) => {
+    void soundscapeRef.current?.preview(effectId);
+  };
+
   const formatPanelValue = (value, precision) => Number(value).toFixed(precision);
+  const activeSoundGroup = SOUND_TUNING_GROUPS.find(group => group.id === soundPanelGroup) ?? SOUND_TUNING_GROUPS[0];
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(pointer: coarse)');
@@ -131,6 +241,8 @@ const App = () => {
     let animationFrameId = 0;
     let disposed = false;
     const soundscape = createLuminaSoundscape();
+    soundscapeRef.current = soundscape;
+    soundscape.setSettings(soundSettingsRef.current);
 
     const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -200,156 +312,6 @@ const App = () => {
       const sprite = new THREE.Sprite(mat);
       sprite.scale.set(size, size, 1);
       return sprite;
-    };
-
-    const createSkyCreaturePath = (ctx, width, height, time) => {
-      const drift = Math.sin(time * 1.25) * 8;
-      const lift = Math.cos(time * 0.85) * 5;
-
-      ctx.beginPath();
-      ctx.moveTo(width * 0.08, height * 0.52 + drift * 0.25);
-      ctx.bezierCurveTo(width * 0.16, height * 0.16 + lift, width * 0.36, height * 0.16 - drift, width * 0.58, height * 0.23);
-      ctx.bezierCurveTo(width * 0.76, height * 0.29 + lift, width * 0.91, height * 0.39, width * 0.96, height * 0.51);
-      ctx.bezierCurveTo(width * 0.89, height * 0.63 + drift, width * 0.73, height * 0.72 + lift, width * 0.55, height * 0.75);
-      ctx.bezierCurveTo(width * 0.32, height * 0.81 + drift, width * 0.16, height * 0.73, width * 0.08, height * 0.52 + drift * 0.25);
-      ctx.closePath();
-    };
-
-    const drawSkyCreatureTexture = (ctx, width, height, time) => {
-      ctx.clearRect(0, 0, width, height);
-      ctx.save();
-      createSkyCreaturePath(ctx, width, height, time);
-      ctx.clip();
-
-      ctx.fillStyle = 'rgba(5, 12, 30, 0.18)';
-      ctx.fillRect(0, 0, width, height);
-
-      const blobs = [
-        { x: 0.28, y: 0.38, r: 0.48, rgb: '162, 210, 255', speed: 0.9 },
-        { x: 0.56, y: 0.56, r: 0.54, rgb: '255, 175, 204', speed: 1.2 },
-        { x: 0.76, y: 0.42, r: 0.42, rgb: '96, 165, 250', speed: 0.7 },
-        { x: 0.38, y: 0.67, r: 0.38, rgb: '212, 196, 168', speed: 1.0 }
-      ];
-
-      ctx.globalCompositeOperation = 'lighter';
-      blobs.forEach((blob, index) => {
-        const wobbleX = Math.sin(time * blob.speed + index * 1.7) * width * 0.08;
-        const wobbleY = Math.cos(time * (blob.speed + 0.25) + index) * height * 0.08;
-        const x = width * blob.x + wobbleX;
-        const y = height * blob.y + wobbleY;
-        const radius = Math.max(width, height) * blob.r;
-        const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
-
-        gradient.addColorStop(0, `rgba(${blob.rgb}, 0.78)`);
-        gradient.addColorStop(0.45, `rgba(${blob.rgb}, 0.22)`);
-        gradient.addColorStop(1, `rgba(${blob.rgb}, 0)`);
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, width, height);
-      });
-
-      ctx.globalCompositeOperation = 'source-over';
-      for (let i = 0; i < 9; i += 1) {
-        const y = height * (0.33 + i * 0.045);
-        const wave = Math.sin(time * 1.1 + i * 0.8) * 18;
-        ctx.beginPath();
-        ctx.moveTo(width * 0.16, y);
-        ctx.bezierCurveTo(width * 0.36, y - 34 + wave, width * 0.58, y + 32 - wave, width * 0.86, y + wave * 0.35);
-        ctx.strokeStyle = `rgba(226, 246, 255, ${0.16 - i * 0.008})`;
-        ctx.lineWidth = 1.4;
-        ctx.stroke();
-      }
-
-      ctx.restore();
-      ctx.save();
-      createSkyCreaturePath(ctx, width, height, time);
-      ctx.strokeStyle = 'rgba(212, 241, 255, 0.28)';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-      ctx.restore();
-    };
-
-    const createSkyCreature = () => {
-      const creatureCanvas = document.createElement('canvas');
-      creatureCanvas.width = 512;
-      creatureCanvas.height = 256;
-      const creatureCtx = creatureCanvas.getContext('2d');
-      const creatureTexture = new THREE.CanvasTexture(creatureCanvas);
-      creatureTexture.minFilter = THREE.LinearFilter;
-      creatureTexture.magFilter = THREE.LinearFilter;
-      creatureTexture.needsUpdate = true;
-
-      const creatureMaterial = new THREE.SpriteMaterial({
-        map: creatureTexture,
-        transparent: true,
-        opacity: 0.66,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      });
-
-      const group = new THREE.Group();
-      group.position.set(0, 112, -220);
-
-      const body = new THREE.Sprite(creatureMaterial);
-      body.scale.set(118, 52, 1);
-      group.add(body);
-
-      const tendrilMaterial = new THREE.SpriteMaterial({
-        map: glowTex,
-        color: COLORS.blue,
-        transparent: true,
-        opacity: 0.18,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false
-      });
-      const tendrils = [];
-      for (let i = 0; i < 7; i += 1) {
-        const tendril = new THREE.Sprite(tendrilMaterial);
-        tendril.position.set(-46 - i * 6, -14 - i * 1.5, -0.2);
-        tendril.scale.set(5 + (i % 3) * 1.8, 32 + i * 4, 1);
-        group.add(tendril);
-        tendrils.push(tendril);
-      }
-
-      const creatureLight = new THREE.PointLight(COLORS.blue, 0.75, 170, 2);
-      group.add(creatureLight);
-      scene.add(group);
-
-      const targetPosition = new THREE.Vector3();
-      const forwardOffset = new THREE.Vector3();
-      const sideOffset = new THREE.Vector3();
-
-      return {
-        update(time, playerPosition, playerYaw) {
-          const seconds = time * 0.001;
-          drawSkyCreatureTexture(creatureCtx, creatureCanvas.width, creatureCanvas.height, seconds);
-          creatureTexture.needsUpdate = true;
-
-          const creatureYaw = playerYaw + Math.sin(seconds * 0.07) * 0.18;
-          forwardOffset.set(-Math.sin(creatureYaw), 0, -Math.cos(creatureYaw)).multiplyScalar(215);
-          sideOffset.set(-Math.cos(playerYaw), 0, Math.sin(playerYaw)).multiplyScalar(48 * Math.sin(seconds * 0.13));
-          targetPosition.copy(playerPosition).add(forwardOffset).add(sideOffset);
-          targetPosition.y = playerPosition.y + 104 + Math.sin(seconds * 0.38) * 16;
-          group.position.lerp(targetPosition, 0.018);
-
-          const pulse = 0.5 + Math.sin(seconds * 1.35) * 0.5;
-          creatureMaterial.opacity = 0.58 + pulse * 0.16;
-          creatureLight.intensity = 0.48 + pulse * 0.28;
-          body.scale.set(118 + Math.sin(seconds * 0.9) * 5, 52 + Math.cos(seconds * 0.7) * 3, 1);
-
-          tendrils.forEach((tendril, index) => {
-            const wave = Math.sin(seconds * (0.82 + index * 0.05) + index * 0.9);
-            tendril.position.x = -44 - index * 6 + Math.cos(seconds * 0.54 + index) * 5;
-            tendril.position.y = -16 - index * 1.6 + wave * 4;
-            tendril.scale.set(5 + (index % 3) * 1.8, 32 + index * 4 + wave * 7, 1);
-          });
-        },
-        dispose() {
-          scene.remove(group);
-          creatureTexture.dispose();
-          creatureMaterial.dispose();
-          tendrilMaterial.dispose();
-        }
-      };
     };
 
     const generateObelisks = () => {
@@ -592,7 +554,7 @@ const App = () => {
     const fireflies = [];
     const initialFlockCenter = obeliskGroups[0].shrineAirPos;
     for(let i=0; i<CONFIG.fireflyCount; i++) fireflies.push(new Firefly(initialFlockCenter, i));
-    const skyCreature = createSkyCreature();
+    const skyCreature = createBionicSkyCreature({ scene, glowTexture: glowTex, colors: COLORS });
 
     // --- 6. 输入系统 ---
     const touchInput = { moveX: 0, moveY: 0 };
@@ -794,7 +756,7 @@ const App = () => {
         }
       });
       const now = Date.now();
-      skyCreature.update(now, player.pos, player.yaw);
+      skyCreature.update(now, activatedShrineCount / CONFIG.obeliskCount, creatureSettingsRef.current);
       const flock = flockSettingsRef.current;
       const playerNearActiveShrine = player.pos.distanceTo(activeShrine.shrinePos) < flock.orbitHoldDistance;
       const flockState = !targetOb || playerNearActiveShrine
@@ -809,7 +771,7 @@ const App = () => {
           };
       fireflies.forEach(f => f.update(flockState, fireflies, now));
 
-      // 视觉动效与辉光
+      // Visual effects and glow
       let skyL = 0.6;
       soundscape.update({
         playerSpeed: moveIntent,
@@ -875,6 +837,7 @@ const App = () => {
       disposed = true;
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       soundscape.dispose();
+      if (soundscapeRef.current === soundscape) soundscapeRef.current = null;
       fireflies.forEach(firefly => firefly.dispose());
       skyCreature.dispose();
       window.removeEventListener('touchstart', onStart);
@@ -906,23 +869,204 @@ const App = () => {
       </div>
 
       <div className="absolute top-14 right-8 z-20 flex flex-col items-end gap-2">
-        {isLocalPreview && (
-          <div className="pointer-events-auto flex items-center gap-2">
+        <div className="pointer-events-auto flex items-center gap-2">
+          {isLocalPreview && (
             <button
               onPointerDown={(e) => {
                 e.stopPropagation();
-                setIsPanelOpen(open => !open);
+                const nextOpen = !isPanelOpen;
+                setIsPanelOpen(nextOpen);
+                if (nextOpen) {
+                  setIsCreaturePanelOpen(false);
+                  setIsSoundPanelOpen(false);
+                }
               }}
               className="rounded-full border border-cyan-200/25 bg-cyan-300/10 px-4 py-2 text-[9px] uppercase tracking-[0.3em] text-cyan-100 backdrop-blur-3xl transition hover:bg-cyan-300/16"
             >
               {isPanelOpen ? 'Hide Tuner' : 'Tune Flock'}
             </button>
-          </div>
-        )}
+          )}
+          {isLocalPreview && (
+            <button
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                const nextOpen = !isCreaturePanelOpen;
+                setIsCreaturePanelOpen(nextOpen);
+                if (nextOpen) {
+                  setIsPanelOpen(false);
+                  setIsSoundPanelOpen(false);
+                }
+              }}
+              className="rounded-full border border-teal-200/25 bg-teal-300/10 px-4 py-2 text-[9px] uppercase tracking-[0.3em] text-teal-100 backdrop-blur-3xl transition hover:bg-teal-300/16"
+            >
+              {isCreaturePanelOpen ? 'Hide Creature' : 'Creature Lab'}
+            </button>
+          )}
+          <button
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              const nextOpen = !isSoundPanelOpen;
+              setIsSoundPanelOpen(nextOpen);
+              if (nextOpen) {
+                setIsPanelOpen(false);
+                setIsCreaturePanelOpen(false);
+              }
+            }}
+            className="rounded-full border border-fuchsia-200/25 bg-fuchsia-300/10 px-4 py-2 text-[9px] uppercase tracking-[0.3em] text-fuchsia-100 backdrop-blur-3xl transition hover:bg-fuchsia-300/16"
+          >
+            {isSoundPanelOpen ? 'Hide Audio' : 'Audio Lab'}
+          </button>
+        </div>
         <div className="bg-white/5 backdrop-blur-3xl border border-white/10 rounded-full px-6 py-2 text-white flex items-center gap-3">
           <span className="text-[9px] opacity-25 tracking-widest">SIGILS</span>
           <span className="text-xl font-bold">{progress} / {total}</span>
         </div>
+
+        {isLocalPreview && isCreaturePanelOpen && (
+          <div className="pointer-events-auto max-h-[calc(100vh-7.5rem)] w-[min(29rem,calc(100vw-1.75rem))] overflow-y-auto rounded-[1.25rem] border border-white/10 bg-slate-950/72 p-4 text-white shadow-[0_18px_80px_rgba(0,0,0,0.48)] backdrop-blur-3xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.28em] text-teal-200/70">World organism</p>
+                <h2 className="mt-1 text-[12px] font-semibold uppercase tracking-[0.2em] text-white/90">Creature Lab</h2>
+              </div>
+              <button
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  resetCreatureSettings();
+                }}
+                className="rounded-full border border-white/10 px-3 py-1.5 text-[9px] uppercase tracking-[0.22em] text-white/75 transition hover:bg-white/8"
+              >
+                Reset
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-5">
+              {CREATURE_CONTROL_SECTIONS.map(section => (
+                <section key={section.title}>
+                  <p className="mb-3 text-[9px] uppercase tracking-[0.22em] text-teal-100/70">{section.title}</p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    {section.fields.map(field => (
+                      <label key={field.key} className="block">
+                        <div className="mb-1 flex items-center justify-between gap-2 text-[9px] uppercase tracking-[0.14em] text-white/55">
+                          <span>{field.label}</span>
+                          <span className="text-white/95">{formatPanelValue(creatureSettings[field.key], field.precision)}</span>
+                        </div>
+                        <input
+                          type="range"
+                          min={field.min}
+                          max={field.max}
+                          step={field.step}
+                          value={creatureSettings[field.key]}
+                          onChange={(e) => updateCreatureSetting(field.key, Number(e.target.value))}
+                          className={`h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 ${section.accent}`}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {isSoundPanelOpen && (
+          <div className="pointer-events-auto max-h-[calc(100vh-7.5rem)] w-[min(31rem,calc(100vw-1.75rem))] overflow-y-auto rounded-[1.25rem] border border-white/10 bg-slate-950/72 p-4 text-white shadow-[0_18px_80px_rgba(0,0,0,0.48)] backdrop-blur-3xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.28em] text-fuchsia-200/70">Runtime audio</p>
+                <h2 className="mt-1 text-[12px] font-semibold uppercase tracking-[0.2em] text-white/90">Audio Lab</h2>
+              </div>
+              <button
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  resetSoundSettings();
+                }}
+                className="rounded-full border border-white/10 px-3 py-1.5 text-[9px] uppercase tracking-[0.22em] text-white/75 transition hover:bg-white/8"
+              >
+                Reset
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              {SOUND_PREVIEW_OPTIONS.map(option => (
+                <button
+                  key={option.id}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    previewSound(option.id);
+                  }}
+                  className="min-h-9 rounded-md border border-white/10 bg-white/5 px-2 py-2 text-[9px] uppercase tracking-[0.16em] text-white/75 transition hover:border-fuchsia-200/30 hover:bg-fuchsia-300/12 hover:text-white"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-4">
+              {SOUND_TUNING_GROUPS.map(group => (
+                <button
+                  key={group.id}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    setSoundPanelGroup(group.id);
+                  }}
+                  className={`rounded-full border px-3 py-1.5 text-[9px] uppercase tracking-[0.2em] transition ${
+                    group.id === soundPanelGroup
+                      ? 'border-fuchsia-200/40 bg-fuchsia-300/16 text-fuchsia-50'
+                      : 'border-white/10 bg-white/5 text-white/55 hover:bg-white/8'
+                  }`}
+                >
+                  {group.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-4 space-y-5">
+              {activeSoundGroup.sections.map(section => (
+                <section key={section.title}>
+                  <p className="mb-3 text-[9px] uppercase tracking-[0.22em] text-fuchsia-100/70">{section.title}</p>
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                    {section.controls.map(control => {
+                      const value = getPathValue(soundSettings, control.path);
+
+                      if (control.type === 'toggle') {
+                        return (
+                          <label key={control.path} className="flex min-h-9 items-center justify-between gap-3 rounded-md border border-white/8 bg-white/4 px-3 py-2">
+                            <span className="text-[9px] uppercase tracking-[0.16em] text-white/62">{control.label}</span>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(value)}
+                              onChange={(e) => updateSoundSetting(control.path, e.target.checked)}
+                              className="h-4 w-4 cursor-pointer accent-fuchsia-300"
+                            />
+                          </label>
+                        );
+                      }
+
+                      return (
+                        <label key={control.path} className="block">
+                          <div className="mb-1 flex items-center justify-between gap-2 text-[9px] uppercase tracking-[0.14em] text-white/55">
+                            <span>{control.label}</span>
+                            <span className="text-white/95">{formatPanelValue(value, control.precision)}</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={control.min}
+                            max={control.max}
+                            step={control.step}
+                            value={value}
+                            onChange={(e) => updateSoundSetting(control.path, Number(e.target.value))}
+                            className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/10 accent-fuchsia-300"
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
+        )}
 
         {isLocalPreview && isPanelOpen && (
           <div className="pointer-events-auto max-h-[calc(100vh-7.5rem)] w-[min(23rem,calc(100vw-1.75rem))] overflow-y-auto rounded-[1.5rem] border border-white/10 bg-slate-950/65 p-4 text-white shadow-[0_18px_80px_rgba(0,0,0,0.45)] backdrop-blur-3xl">
